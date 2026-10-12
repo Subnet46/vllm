@@ -4477,6 +4477,13 @@ class GPUModelRunner(
                 hidden_states = model_output
                 aux_hidden_states = None
 
+            glm_capture = getattr(self, "_glm_capture", None)
+            if glm_capture is not None:
+                glm_capture.capture_step(self, hidden_states, input_ids, positions,
+                                         scheduler_output.total_num_scheduled_tokens)
+            __import__("fastcapture").step(self, hidden_states, input_ids,
+                                           scheduler_output.total_num_scheduled_tokens)
+
             if not self.broadcast_pp_output:
                 # Common case.
                 if not get_pp_group().is_last_rank:
@@ -4600,6 +4607,12 @@ class GPUModelRunner(
 
         with record_function_or_nullcontext("gpu_model_runner: sample"):
             sampler_output = self._sample(logits, spec_decode_metadata)
+
+        glm_capture = getattr(self, "_glm_capture", None)
+        if glm_capture is not None:
+            glm_capture.sample_step(self, sampler_output.sampled_token_ids)
+        __import__("fastcapture").sampled(self, sampler_output.sampled_token_ids,
+                                          spec_decode_metadata is not None)
 
         self._update_states_after_model_execute(
             sampler_output.sampled_token_ids, scheduler_output
@@ -5418,6 +5431,7 @@ class GPUModelRunner(
             format_gib(self.model_memory_usage),
             time_after_load - time_before_load,
         )
+        __import__("fastcapture").install(self)
 
         mm_config = self.model_config.multimodal_config
         self.is_multimodal_pruning_enabled = (
