@@ -104,7 +104,7 @@ class FlashInferMLASparseSM90Backend(AttentionBackend):
 
     @classmethod
     def supports_compute_capability(cls, capability: DeviceCapability) -> bool:
-        return capability.major == 9
+        return capability.major in (9, 12)
 
     @classmethod
     def supports_combination(
@@ -178,7 +178,7 @@ class _SM90State:
         self.workspace = torch.empty(_WORKSPACE_BYTES, dtype=torch.uint8, device=device)
         self.device = device
         self.num_heads = num_heads
-        self.kv_dtype = kv_dtype
+        self.kv_dtype = torch.float8_e4m3fn if kv_dtype == torch.uint8 else kv_dtype
         self.max_tokens = max_tokens
         self.topk_width = topk_width
         self.kv_lora_rank = kv_lora_rank
@@ -199,7 +199,7 @@ class _SM90State:
             kv_indices=self.kv_indices,
             kv_len_arr=self.kv_len_arr,
             use_cuda_graph=True,
-            backend="fa3",
+            backend=(__import__("os").environ.get("SN46_SPARSE_FA") or "fa2"),
         )
         self._arange_cpu = torch.arange(self.max_tokens + 1, dtype=torch.int32)
         self._qo_cpu = torch.empty(self.max_tokens + 1, dtype=torch.int32)
