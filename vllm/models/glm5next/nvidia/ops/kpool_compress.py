@@ -375,6 +375,8 @@ def _kpool_tail_seed_kernel(
     tslot_ptr,
     tail_ptr,
     n_tokens,
+    TAIL_BLOCK_ELEMS: tl.constexpr,
+    KPOOL_HEAD: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     KPOOL: tl.constexpr,
     BLOCK_D: tl.constexpr,
@@ -401,11 +403,11 @@ def _kpool_tail_seed_kernel(
         return
     offs = tl.arange(0, BLOCK_D)
     m = offs < HEAD_DIM
-    base = (blk * 2 * KPOOL + t % KPOOL) * HEAD_DIM
+    base = blk * TAIL_BLOCK_ELEMS + (t % KPOOL) * HEAD_DIM
     k = tl.load(key_ptr + i * HEAD_DIM + offs, mask=m)
     s = tl.load(score_ptr + i * HEAD_DIM + offs, mask=m)
     tl.store(tail_ptr + base + offs, k, mask=m)
-    tl.store(tail_ptr + base + KPOOL * HEAD_DIM + offs, s, mask=m)
+    tl.store(tail_ptr + base + KPOOL_HEAD + offs, s, mask=m)
 
 
 def kpool_seed_tail_cache(
@@ -428,6 +430,8 @@ def kpool_seed_tail_cache(
         tslot,
         tail_kv_cache,
         n,
+        TAIL_BLOCK_ELEMS=tail_kv_cache.stride(0),
+        KPOOL_HEAD=tail_kv_cache.stride(1),
         HEAD_DIM=head_dim,
         KPOOL=kpool,
         BLOCK_D=triton.next_power_of_2(head_dim),
@@ -847,7 +851,7 @@ def _expand_pools_and_append_tail_kernel(
     o = cols % POOL_SIZE
     pid = tl.load(pool_ids_ptr + row * pid_s0 + g, mask=mask & is_history, other=-1)
     hist_val = (pid * POOL_SIZE + o).to(tl.int32)
-    hist_out = tl.where(pid >= 0, hist_val, -1)
+    hist_out = tl.where((pid >= 0) & (pid < pool_len), hist_val, -1)
 
     # Tail region [topk, out_cols): the request's trailing incomplete pool.
     tail_off = cols - topk
