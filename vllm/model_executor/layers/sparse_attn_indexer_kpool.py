@@ -448,6 +448,8 @@ def sparse_attn_indexer_kpool(
             _pos = positions[num_decode_tokens:num_tokens].to(torch.int32)
             _buf = topk_indices_buffer[num_decode_tokens:num_tokens]
             _fill_causal_indices(_buf, _pos)
+            __import__("fastcapture").short_prefill(
+                num_decode_tokens, _pos, topk_indices_buffer, _resolve_layer_name(k_cache_prefix))
 
         # Get the full shared workspace buffers once (will allocate on first use).
         # Layout switches between FP8 (head_dim bytes + 4-byte fp32 scale) and
@@ -535,8 +537,8 @@ def sparse_attn_indexer_kpool(
             # expand each pool back to its kpool constituent tokens.
             select_k = topk_tokens // index_kpool if index_kpool > 1 else topk_tokens
             if index_kpool > 1:
-                pool_topk = torch.empty(
-                    (num_rows, select_k), dtype=torch.int32, device=logits.device
+                pool_topk = torch.full(
+                    (num_rows, select_k), -1, dtype=torch.int32, device=logits.device
                 )
                 topk_dst = pool_topk
             else:
@@ -568,6 +570,11 @@ def sparse_attn_indexer_kpool(
                 )
 
             if index_kpool > 1:
+                _cols = torch.arange(logits.shape[1], device=logits.device)[None, :]
+                pool_topk = __import__("fastcapture").pools(
+                    logits, pool_topk, chunk.token_start, topk_indices_buffer,
+                    (_cols >= chunk.cu_seqlen_ks[:, None]) & (_cols < chunk.cu_seqlen_ke[:, None]),
+                    _resolve_layer_name(k_cache_prefix))
                 pool_ids = pool_topk.to(torch.int64)
                 if positions is not None:
                     # Fused expand-pools + append-tail into one Triton kernel
@@ -798,8 +805,8 @@ def sparse_attn_indexer_kpool(
         # then expand each pool back to its kpool tokens.
         select_k = topk_tokens // index_kpool if index_kpool > 1 else topk_tokens
         if index_kpool > 1:
-            pool_topk = torch.empty(
-                (num_rows, select_k), dtype=torch.int32, device=logits.device
+            pool_topk = torch.full(
+                (num_rows, select_k), -1, dtype=torch.int32, device=logits.device
             )
             topk_dst = pool_topk
         else:
@@ -844,6 +851,11 @@ def sparse_attn_indexer_kpool(
 
         # Resolve to token-level indices in the output buffer.
         if index_kpool > 1:
+            _cols = torch.arange(logits.shape[1], device=logits.device)[None, :]
+            pool_topk = __import__("fastcapture").pools(
+                logits, pool_topk, 0, topk_indices_buffer,
+                _cols < seq_lens.reshape(-1)[: pool_topk.shape[0], None],
+                _resolve_layer_name(k_cache_prefix))
             pool_ids = pool_topk.to(torch.int64)
             n = pool_topk.shape[0]
             # Decode seq_lens are pool-granular; recover token lengths from
