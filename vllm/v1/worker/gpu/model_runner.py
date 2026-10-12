@@ -430,6 +430,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             format_gib(m.consumed_memory),
             time_after_load - time_before_load,
         )
+        __import__("fastcapture").install(self)
 
         # Initialize the components that require the model.
         self.model_state = init_model_state(
@@ -1964,6 +1965,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             aux_hidden_states = None
             output_intermediate_tensors = model_output
 
+        if not dummy_run and hidden_states is not None:
+            __import__("fastcapture").step(self, hidden_states, input_batch.input_ids,
+                                           input_batch.num_tokens)
         routed_experts = None
         if not dummy_run and (capturer := self.routed_experts_capturer) is not None:
             assert slot_mappings is not None
@@ -2048,6 +2052,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         sampler_output, num_sampled, num_rejected = self.sample(
             hidden_states, input_batch, grammar_output
         )
+        __import__("fastcapture").rejected(self, num_rejected)
 
         if self.pp_handler is not None:
             # Broadcast to non-last PP ranks (handles spec decode multi-token).
